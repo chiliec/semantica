@@ -94,6 +94,18 @@ class TestConnectorAuth:
         assert conn.instance_url == INSTANCE
         assert conn.token_url == INSTANCE + "/oauth_token.do"
 
+    def test_rejects_instance_url_with_query(self):
+        with pytest.raises(ValidationError):
+            ServiceNowConnector(
+                instance_url=INSTANCE + "/?x=1", username="u", password="p"
+            )
+
+    def test_rejects_instance_url_with_fragment(self):
+        with pytest.raises(ValidationError):
+            ServiceNowConnector(
+                instance_url=INSTANCE + "/#x", username="u", password="p"
+            )
+
     def test_env_configuration(self, monkeypatch):
         monkeypatch.setenv("SERVICENOW_INSTANCE_URL", INSTANCE)
         monkeypatch.setenv("SERVICENOW_USERNAME", "eu")
@@ -135,6 +147,15 @@ class TestConnectorAuth:
         assert body["grant_type"] == "client_credentials"
         assert body["client_id"] == "cid"
         assert session.headers["Authorization"] == "Bearer tok-123"
+
+    def test_token_exchange_pins_private_ip_trust_to_original_host(self):
+        with patch(GUARD) as guard:
+            guard.return_value = _json_resp({"access_token": "tok-123"})
+            conn = ServiceNowConnector(
+                instance_url=INSTANCE, client_id="cid", client_secret="sec"
+            )
+            conn.get_session()
+        assert guard.call_args[1]["allow_private_ips_on_redirect"] is False
 
     def test_oauth_password_grant_when_user_credentials_present(self):
         with patch(GUARD) as guard:
@@ -283,6 +304,28 @@ class TestIngestTable:
         assert params["sysparm_fields"] == "sys_id,name"
         assert "sysparm_query" not in params
 
+    def test_field_selection_always_includes_sys_id(self):
+        with patch(GUARD) as guard:
+            guard.return_value = _json_resp(_result())
+            _basic_ingestor().ingest_table("incident", fields=["number", "priority"])
+        selected = guard.call_args[1]["params"]["sysparm_fields"].split(",")
+        assert "sys_id" in selected
+        assert selected == ["sys_id", "number", "priority"]
+
+    def test_field_selection_keeps_sys_id_once_when_already_requested(self):
+        with patch(GUARD) as guard:
+            guard.return_value = _json_resp(_result())
+            _basic_ingestor().ingest_table("incident", fields="number,sys_id")
+        selected = guard.call_args[1]["params"]["sysparm_fields"].split(",")
+        assert selected.count("sys_id") == 1
+        assert selected == ["number", "sys_id"]
+
+    def test_data_request_pins_private_ip_trust_to_original_host(self):
+        with patch(GUARD) as guard:
+            guard.return_value = _json_resp(_result())
+            _basic_ingestor().ingest_table("incident")
+        assert guard.call_args[1]["allow_private_ips_on_redirect"] is False
+
     def test_requires_table(self):
         with pytest.raises(ValidationError):
             _basic_ingestor().ingest_table()
@@ -373,6 +416,63 @@ class TestExportAsDocuments:
         data = ServiceNowData(records=[record], table="t", count=1, instance=INSTANCE)
         data.to_documents()
         assert record == {"sys_id": "abc"}
+
+    def test_record_target_column_stays_an_entity(self):
+        data = ServiceNowData(
+            records=[{"sys_id": "abc", "name": "rel-row", "target": "cmdb_ci:xyz"}],
+            table="cmdb_rel_ci",
+            count=1,
+            instance=INSTANCE,
+        )
+        doc = data.to_documents()[0]
+        assert "target" not in doc
+        assert doc["servicenow_fields"]["target"] == "cmdb_ci:xyz"
+        assert doc["id"] == "abc"
+        assert doc["name"] == "rel-row"
+        assert "source" in doc and "target" not in doc
+
+    def test_record_source_and_table_columns_do_not_override_provenance(self):
+        data = ServiceNowData(
+            records=[
+                {"sys_id": "abc", "source": "email", "table": "sn_customerservice"}
+            ],
+            table="incident",
+            count=1,
+            instance=INSTANCE,
+        )
+        doc = data.to_documents()[0]
+        assert doc["source"] == INSTANCE
+        assert doc["table"] == "incident"
+        assert doc["servicenow_fields"]["source"] == "email"
+        assert doc["servicenow_fields"]["table"] == "sn_customerservice"
+
+    def test_record_own_id_column_does_not_override_sys_id(self):
+        data = ServiceNowData(
+            records=[{"sys_id": "abc", "id": "wrong-id"}],
+            table="incident",
+            count=1,
+            instance=INSTANCE,
+        )
+        doc = data.to_documents()[0]
+        assert doc["id"] == "abc"
+        assert doc["servicenow_fields"]["id"] == "wrong-id"
+
+    def test_export_builds_graph_entity_for_row_with_target(self):
+        from semantica.kg.graph_builder import GraphBuilder
+
+        data = ServiceNowData(
+            records=[{"sys_id": "abc", "name": "srv", "target": "other"}],
+            table="cmdb_ci",
+            count=1,
+            instance=INSTANCE,
+        )
+        docs = data.to_documents()
+        entities: list = []
+        relationships: list = []
+        GraphBuilder()._process_item(docs[0], entities, relationships)
+        assert len(entities) == 1
+        assert relationships == []
+        assert entities[0]["id"] == "abc"
 
 
 class TestLazyExport:

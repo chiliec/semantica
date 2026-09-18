@@ -56,6 +56,14 @@ _logger = get_logger("servicenow_ingestor")
 _TABLE_API = "/api/now/table/"
 _TOKEN_PATH = "/oauth_token.do"
 
+# Record columns whose names collide with the discriminators GraphBuilder
+# uses (``source``/``target`` mark a relationship; ``id``/``table`` are
+# canonical provenance). A raw ServiceNow value under any of these would
+# either clobber connector provenance or flip an entity row into a
+# relationship, so they are relocated into ``_RAW_RECORD_KEY``.
+_RESERVED_RECORD_KEYS = ("id", "source", "target", "table")
+_RAW_RECORD_KEY = "servicenow_fields"
+
 
 @dataclass
 class ServiceNowData:
@@ -71,21 +79,37 @@ class ServiceNowData:
         """Flatten each record to a document dict ``GraphBuilder`` can consume.
 
         GraphBuilder only treats a dict as an entity when it carries
-        ``id``/``entity_id``/``name`` (or ``text``+``type``). Every ServiceNow
-        record has a ``sys_id``; that becomes ``id``, and ``name`` is resolved
-        from the record's own ``name``, ``number`` or ``short_description``
-        (falling back to ``table:index``).
+        ``id``/``entity_id``/``name`` (or ``text``+``type``), and treats one
+        carrying both ``source`` and ``target`` as a *relationship*. Every
+        ServiceNow record has a ``sys_id``; that becomes ``id``, and ``name``
+        is resolved from the record's own ``name``, ``number`` or
+        ``short_description`` (falling back to ``table:index``).
+
+        ServiceNow columns whose names collide with those discriminators or
+        with the connector provenance keys (``id``/``source``/``target``/
+        ``table``) are moved into the nested ``servicenow_fields`` mapping, so
+        a row that happens to have a ``target`` column still builds as an
+        entity rather than a spurious relationship, and canonical provenance
+        (``source`` = instance, ``table`` = table) is never overwritten.
         """
         docs: List[Dict[str, Any]] = []
         for index, record in enumerate(self.records):
-            doc = dict(record)
+            doc: Dict[str, Any] = {}
+            raw: Dict[str, Any] = {}
+            for key, value in record.items():
+                if key in _RESERVED_RECORD_KEYS:
+                    raw[key] = value
+                else:
+                    doc[key] = value
             sys_id = _scalar(record.get("sys_id"))
-            doc.setdefault("id", sys_id or f"{self.table}:{index}")
+            doc["id"] = sys_id or f"{self.table}:{index}"
             if isinstance(doc.get("name"), dict):
                 doc["name"] = _scalar(doc["name"])
             doc.setdefault("name", self._name_value(record) or sys_id or self.table)
-            doc.setdefault("source", self.instance)
-            doc.setdefault("table", self.table)
+            doc["source"] = self.instance
+            doc["table"] = self.table
+            if raw:
+                doc[_RAW_RECORD_KEY] = raw
             docs.append(doc)
         return docs
 
@@ -178,6 +202,11 @@ class ServiceNowConnector:
                 f"ServiceNow instance_url must be an absolute http(s) URL, "
                 f"got {self.instance_url!r}."
             )
+        if parsed.query or parsed.fragment:
+            raise ValidationError(
+                f"ServiceNow instance_url must not carry a query or fragment "
+                f"component, got {self.instance_url!r}."
+            )
 
         if not self.auth:
             self.auth = "oauth2" if self.client_id else "basic"
@@ -261,6 +290,7 @@ class ServiceNowConnector:
             self.token_url,
             session=self.session,
             allow_private_ips=self.allow_private_ips,
+            allow_private_ips_on_redirect=False,
             data=body,
             timeout=self.config.get("timeout", 30),
         )
@@ -386,6 +416,7 @@ class ServiceNowIngestor:
                 url,
                 session=session,
                 allow_private_ips=self.connector.allow_private_ips,
+                allow_private_ips_on_redirect=False,
                 params=params,
                 timeout=self.connector.config.get("timeout", 30),
             )
@@ -429,7 +460,10 @@ class ServiceNowIngestor:
         if fields:
             if not isinstance(fields, str):
                 fields = ",".join(fields)
-            params["sysparm_fields"] = fields
+            selected = [f.strip() for f in fields.split(",") if f.strip()]
+            if "sys_id" not in selected:
+                selected.insert(0, "sys_id")
+            params["sysparm_fields"] = ",".join(selected)
         if isinstance(display_value, str):
             params["sysparm_display_value"] = display_value
         else:
