@@ -151,6 +151,26 @@ ANALYZE_DECISION_IMPACT = {
     "required": ["decision_id"],
 }
 
+LINK_DECISIONS = {
+    "type": "object",
+    "properties": {
+        "source": {
+            "type": "string",
+            "description": "Source decision ID (the cause)",
+        },
+        "target": {
+            "type": "string",
+            "description": "Target decision ID (the effect)",
+        },
+        "relationship": {
+            "type": "string",
+            "enum": ["CAUSED", "INFLUENCED", "PRECEDENT_FOR"],
+            "description": "Causal relationship type",
+        },
+    },
+    "required": ["source", "target", "relationship"],
+}
+
 ADD_ENTITY = {
     "type": "object",
     "properties": {

@@ -31,7 +31,7 @@ python -m mcp [--debug]
 
 ---
 
-## Tools (17 total)
+## Tools (18 total)
 
 ### Extraction
 
@@ -50,6 +50,7 @@ python -m mcp [--debug]
 | `find_precedents` | Find past decisions similar to a scenario (hybrid similarity) |
 | `get_causal_chain` | Trace upstream/downstream causal chain from a decision |
 | `analyze_decision_impact` | Analyse downstream influence of a decision |
+| `link_decisions` | Create a causal relationship (CAUSED, INFLUENCED, PRECEDENT_FOR) between two decisions |
 
 ### Knowledge Graph
 
