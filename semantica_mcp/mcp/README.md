@@ -31,7 +31,7 @@ python -m mcp [--debug]
 
 ---
 
-## Tools (18 total)
+## Tools (22 total)
 
 ### Extraction
 
@@ -75,6 +75,15 @@ python -m mcp [--debug]
 |---|---|
 | `export_graph` | Export graph to JSON, CSV, GraphML, Parquet, Turtle, N-Triples, RDF/XML, JSON-LD |
 | `get_provenance` | Audit history and source lineage for a node (`entity_id`) |
+
+### Semantic Retrieval
+
+| Tool | Description |
+|---|---|
+| `store_document` | Chunk a document, embed the chunks, and store them for semantic retrieval. Keyed on `(source, version)`; re-storing identical content is a no-op |
+| `retrieve_context` | Embed a natural-language query and return the most relevant stored chunks with scores and provenance, combined with related knowledge-graph relationships |
+| `update_document` | Replace the stored content of a document identified by `(source, version)`. Returns `not_found` when no stored document matches |
+| `remove_document` | Remove every chunk stored under `(source, version)` from the vector store |
 
 ---
 
@@ -262,7 +271,8 @@ mcp/
 │   ├── decisions.py     # Record, query, precedents, causal chain, impact
 │   ├── graph.py         # Add entity/relationship, search, summary, analytics
 │   ├── reasoning.py     # Forward-chaining rules, abductive hypotheses
-│   └── export.py        # Graph export (multi-format) + provenance
+│   ├── export.py        # Graph export (multi-format) + provenance
+│   └── retrieval.py     # Semantic vector store: store, retrieve, update, remove
 └── resources/
     ├── __init__.py      # Re-exports RESOURCE_DEFINITIONS + handle_resource_read
     └── registry.py      # URI → handler map for the 4 semantica:// resources

@@ -274,7 +274,7 @@ EXPORT_GRAPH = {
     "properties": {
         "format": {
             "type": "string",
-            "enum": ["turtle", "ttl", "nt", "xml", "json-ld", "json", "csv"],
+            "enum": ["turtle", "ttl", "nt", "xml", "json-ld", "jsonld", "json", "csv", "graphml", "parquet"],
             "description": "Export format (default: json-ld)",
         },
     },
